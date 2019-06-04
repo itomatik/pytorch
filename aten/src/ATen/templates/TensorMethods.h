@@ -6,10 +6,10 @@
 #include <c10/macros/Macros.h>
 #include <c10/core/TensorOptions.h>
 #include <ATen/core/DeprecatedTypeProperties.h>
+#include <ATen/core/ATenDispatch.h>
 #ifdef NAMEDTENSOR_ENABLED
 #include <ATen/NamedTensor.h>
 #endif
-
 
 namespace at {
 
