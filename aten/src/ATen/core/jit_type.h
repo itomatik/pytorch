@@ -850,52 +850,65 @@ struct NamedType;
 using NamedTypePtr = std::shared_ptr<NamedType>;
 
 struct CAFFE2_API NamedType : public Type {
-  NamedType(TypeKind tk, c10::QualifiedName qualifiedName)
+  NamedType(TypeKind tk, c10::optional<c10::QualifiedName> qualifiedName)
     : Type(tk)
-    , name_(qualifiedName) {}
+    , name_(std::move(qualifiedName)) {}
 
   std::string python_str() const {
-    return name_.qualifiedName();
+    TORCH_INTERNAL_ASSERT(name_);
+    return name_->qualifiedName();
   }
 
   std::string qualname() const {
-    return name_.qualifiedName();
+    TORCH_INTERNAL_ASSERT(name_);
+    return name_->qualifiedName();
   }
 
   std::string qualifier() const {
-    return name_.prefix();
+    TORCH_INTERNAL_ASSERT(name_);
+    return name_->prefix();
   }
 
   std::string basename() const {
-    return name_.name();
+    TORCH_INTERNAL_ASSERT(name_);
+    return name_->name();
+  }
+
+  const c10::optional<QualifiedName>& qualified_name_obj() const {
+    return name_;
   }
 
  protected:
   // Fully qualified name of type (note that this has to be globally unique).
   // Looks like: "foo.bar.Baz".
-  QualifiedName name_;
+  c10::optional<QualifiedName> name_;
 };
 
 struct TupleType;
 using TupleTypePtr = std::shared_ptr<TupleType>;
 using NameList = std::vector<std::string>;
 // This type represents a Tuple
-struct CAFFE2_API TupleType : public Type {
+struct CAFFE2_API TupleType : public NamedType {
   struct CAFFE2_API NamedTupleSpec {
     // Storing types here too is redundant but it makes encapsulating NamedTuple functionality
     // easier.
-    NamedTupleSpec(std::vector<TypePtr> types, NameList names, c10::optional<c10::QualifiedName> qualName=c10::nullopt)
-      : types(std::move(types)), names(std::move(names)), qualName(std::move(qualName)) {
+    NamedTupleSpec(std::vector<TypePtr> types, NameList names)
+      : types(std::move(types)), names(std::move(names)) {
       createFunctionSchema();
     }
 
     std::vector<TypePtr> types;
     NameList names;
-    // empty qualName indicates an anonymous named tuple, used for example in
-    // the returns of certain operators. If qualName is populated, this
-    // Tuple type is eligible for serialization
-    c10::optional<c10::QualifiedName> qualName;
     std::shared_ptr<FunctionSchema> schema;
+
+    std::vector<std::tuple<std::string, TypePtr>> attrs() const {
+      TORCH_INTERNAL_ASSERT(types.size() == names.size());
+      std::vector<std::tuple<std::string, TypePtr>> retval;
+      for (size_t i = 0; i < types.size(); ++i) {
+        retval.emplace_back(names[i], types[i]);
+      }
+      return retval;
+    }
 
     bool operator==(const NamedTupleSpec& rhs) const {
       return names == rhs.names;
@@ -904,8 +917,8 @@ struct CAFFE2_API TupleType : public Type {
     void createFunctionSchema();
   };
 
-  static TupleTypePtr create(std::vector<TypePtr> types, c10::optional<NamedTupleSpec> namedTupleSpec=c10::nullopt) {
-    return TupleTypePtr(new TupleType(std::move(types), std::move(namedTupleSpec))); // NOLINT(modernize-make-shared)
+  static TupleTypePtr create(std::vector<TypePtr> types, c10::optional<c10::QualifiedName> qualName=c10::nullopt, c10::optional<NamedTupleSpec> namedTupleSpec=c10::nullopt) {
+    return TupleTypePtr(new TupleType(std::move(types), std::move(qualName), std::move(namedTupleSpec))); // NOLINT(modernize-make-shared)
   }
   DEFINE_IS_SUBCLASS(TupleType);
   at::ArrayRef<TypePtr> elements() const {
@@ -937,24 +950,32 @@ struct CAFFE2_API TupleType : public Type {
 
   std::string str() const override {
     std::stringstream ss;
-    ss << "(";
-    for(size_t i = 0; i < elements().size(); ++i) {
-      if(i > 0)
-        ss << ", ";
-      ss << elements()[i]->str();
+    if (qualified_name_obj()) {
+      ss << qualname();
+    } else {
+      ss << "(";
+      for(size_t i = 0; i < elements().size(); ++i) {
+        if(i > 0)
+          ss << ", ";
+        ss << elements()[i]->str();
+      }
+      ss << ")";
     }
-    ss << ")";
     return ss.str();
   }
   std::string python_str() const override {
     std::stringstream ss;
-    ss << "Tuple[";
-    for(size_t i = 0; i < elements().size(); ++i) {
-      if(i > 0)
-        ss << ", ";
-      ss << elements()[i]->python_str();
+    if (qualified_name_obj()) {
+      ss << qualname();
+    } else {
+      ss << "Tuple[";
+      for(size_t i = 0; i < elements().size(); ++i) {
+        if(i > 0)
+          ss << ", ";
+        ss << elements()[i]->python_str();
+      }
+      ss << "]";
     }
-    ss << "]";
     return ss.str();
   }
   bool hasFreeVariables() const override {
@@ -970,10 +991,18 @@ struct CAFFE2_API TupleType : public Type {
     return namedTupleSpec_;
   }
 
+  c10::optional<std::string> base_class_name() const {
+    return "NamedTuple";
+  }
+  std::vector<std::tuple<std::string, TypePtr>> attrs() const {
+    TORCH_INTERNAL_ASSERT(namedTupleSpec_);
+    return namedTupleSpec_->attrs();
+  }
+
   static const TypeKind Kind = TypeKind::TupleType;
 private:
-  TupleType(std::vector<TypePtr> elements_, c10::optional<NamedTupleSpec> namedTupleSpec)
-  : Type(TypeKind::TupleType)
+  TupleType(std::vector<TypePtr> elements_, c10::optional<c10::QualifiedName> qualName, c10::optional<NamedTupleSpec> namedTupleSpec)
+  : NamedType(TypeKind::TupleType, qualName)
   , elements_(std::move(elements_))
   , namedTupleSpec_(std::move(namedTupleSpec)) {
     has_free_variables_ =
@@ -1427,7 +1456,7 @@ using ::torch::jit::script::CompilationUnit;
 struct CAFFE2_API ClassType : public NamedType {
   // Create a class type with name `name` and its methods stored in `cu`.
   static ClassTypePtr create(
-      QualifiedName qualifiedName,
+      c10::optional<QualifiedName> qualifiedName,
       std::shared_ptr<CompilationUnit> cu, bool is_module = false);
 
   DEFINE_IS_SUBCLASS(ClassType);
@@ -1476,9 +1505,9 @@ struct CAFFE2_API ClassType : public NamedType {
 
   std::shared_ptr<Function> getMethod(const std::string& name) const;
   std::vector<Function*> methods() const;
+
   std::shared_ptr<CompilationUnit> compilation_unit();
   std::shared_ptr<const CompilationUnit> compilation_unit() const;
-
 
   size_t numAttributes() const {
     AT_ASSERT(attributeNames_.size() == attributeTypes_.size());
@@ -1535,7 +1564,7 @@ struct CAFFE2_API ClassType : public NamedType {
   static const TypeKind Kind = TypeKind::ClassType;
 
  private:
-  ClassType(QualifiedName name, std::shared_ptr<CompilationUnit> cu, bool is_module);
+  ClassType(c10::optional<QualifiedName> name, std::shared_ptr<CompilationUnit> cu, bool is_module);
 
   // Mapping of attribute names -> their type.
   // NOTE: this does not contain methods, which are stored in the module

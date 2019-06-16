@@ -523,7 +523,7 @@ void TupleType::NamedTupleSpec::createFunctionSchema() {
   }
 
   schema = std::make_shared<FunctionSchema>(
-      /*name=*/qualName.has_value() ? qualName->name() : "",
+      /*name=*/"",
       /*overload_name=*/std::string(""),
       /*arguments=*/arguments,
       /*returns=*/std::vector<Argument>{});

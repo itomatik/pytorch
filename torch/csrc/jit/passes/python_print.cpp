@@ -649,6 +649,10 @@ struct PythonPrintPass {
   void registerClassDependencies(const TypePtr& type) {
     if (const auto classType = type->cast<ClassType>()) {
       addToClassTable(classType);
+    } else if (const auto tupleType = type->cast<TupleType>()) {
+      if (tupleType->qualified_name_obj()) {
+        addToClassTable(tupleType);
+      }
     }
     for (const auto& containedType : type->containedTypes()) {
       registerClassDependencies(containedType);
@@ -889,6 +893,12 @@ struct PythonPrintPass {
         printValueList(stmt, node->inputs(), "print(", ")");
       } break;
       case prim::TupleConstruct: {
+        if (auto qualname = node->output()
+                                ->type()
+                                ->expect<TupleType>()
+                                ->qualified_name_obj()) {
+          stmt << qualname->qualifiedName();
+        }
         printValueList(
             stmt, node->inputs(), "(", node->inputs().size() == 1 ? ",)" : ")");
       } break;
@@ -1111,6 +1121,21 @@ struct PythonPrintPass {
         // TODO fields
         for (auto& method : classType->methods()) {
           printFunction(*method);
+        }
+      }
+    } else if (auto tupleType = type->cast<TupleType>()) {
+      body_ << "class " << tupleType->basename();
+      auto base_class_name = tupleType->base_class_name();
+      TORCH_INTERNAL_ASSERT(base_class_name);
+      body_ << "(" << *base_class_name << "):\n";
+      {
+        const auto guard = WithIndented();
+        for (auto& attr : tupleType->attrs()) {
+          std::string name;
+          TypePtr attr_type;
+          std::tie(name, attr_type) = attr;
+          indent();
+          body_ << name << " : " << attr_type->python_str() << "\n";
         }
       }
     } else {
