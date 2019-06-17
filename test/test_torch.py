@@ -2612,6 +2612,10 @@ class _TestTorchMixin(object):
         expected = torch.tensor([[0.]], dtype=torch.float16)
         self.assertEqual(halfTensor, expected)
 
+        bfloat16Tensor = torch.zeros(1, 1, dtype=torch.bfloat16)
+        expected = torch.tensor([[0.]], dtype=torch.bfloat16)
+        self.assertEqual(bfloat16Tensor, expected)
+
     def test_std_mean(self):
         for device in torch.testing.get_all_device_types():
             x = torch.rand(100, 50, 20, device=device)
@@ -10474,6 +10478,10 @@ class _TestTorchMixin(object):
                 continue
             if t.is_cuda and not torch.cuda.is_available():
                 continue
+            if t == torch.cuda.BFloat16Tensor:
+                continue # TODO: remove once bfloat16 is available on cuda
+            if t == torch.BFloat16Tensor:
+                continue # TODO: Fix in the future PRs regarding bfloat16
             obj = t(100, 100).fill_(1)
             obj.__repr__()
             str(obj)
